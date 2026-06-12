@@ -1,0 +1,163 @@
+/* AtelierLoop 全体スタイル: ダークテーマ基調 */
+
+:root {
+  --bg: #1a1b1f;
+  --bg-panel: #23252b;
+  --bg-elevated: #2c2e36;
+  --border: #3a3d47;
+  --text: #e4e4e9;
+  --text-dim: #9a9ca6;
+  --accent: #7c9cff;
+  --accent-hover: #93afff;
+  --danger: #ff6b6b;
+  --danger-hover: #ff8787;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, 'Segoe UI', 'Hiragino Sans', 'Noto Sans JP', sans-serif;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.app-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.app-tabs {
+  display: flex;
+  gap: 8px;
+}
+
+.app-tab {
+  padding: 6px 16px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.app-tab.active {
+  background: var(--accent);
+  color: #16181d;
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+.app-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+  gap: 16px;
+}
+
+/* --- 汎用ボタン --- */
+
+button {
+  font-family: inherit;
+}
+
+.btn {
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.btn:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #16181d;
+  font-weight: 600;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.btn-danger {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: rgba(255, 107, 107, 0.12);
+  border-color: var(--danger-hover);
+}
+
+/* --- トースト --- */
+
+.toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--accent);
+  color: #16181d;
+  padding: 10px 24px;
+  border-radius: 8px;
+  font-weight: 600;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  z-index: 1000;
+  animation: toast-fade 2.5s ease forwards;
+}
+
+@keyframes toast-fade {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, 8px);
+  }
+  10% {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+  85% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}

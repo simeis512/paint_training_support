@@ -1,0 +1,62 @@
+.sessions-screen {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.sessions-empty {
+  color: var(--text-dim);
+  text-align: center;
+  padding: 32px 0;
+}
+
+.sessions-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 16px;
+}
+
+.session-card {
+  position: relative;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+}
+
+.session-card:hover {
+  border-color: var(--accent);
+}
+
+.session-thumb {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: contain;
+  background: #2a2c33;
+  display: block;
+}
+
+.session-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.session-date {
+  color: var(--text);
+}
+
+.session-delete {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  padding: 2px 8px;
+  font-size: 12px;
+  background: rgba(35, 37, 43, 0.85);
+}

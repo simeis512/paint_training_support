@@ -1,0 +1,67 @@
+.replay-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.replay-modal {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 90vw;
+  max-height: 90vh;
+  overflow: auto;
+}
+
+.replay-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.replay-header h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.replay-error {
+  color: var(--danger);
+}
+
+.replay-canvas-wrap {
+  display: flex;
+  justify-content: center;
+  background: #2a2c33;
+  border-radius: 4px;
+}
+
+.replay-canvas {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+
+.replay-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.replay-speeds {
+  display: flex;
+  gap: 4px;
+}
+
+.replay-seek {
+  flex: 1;
+  min-width: 160px;
+}
