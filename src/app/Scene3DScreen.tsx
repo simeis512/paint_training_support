@@ -5,9 +5,15 @@ import type { Difficulty } from '../scene3d/generator';
 import type { LightPreset, ShadingSteps } from '../scene3d/shading';
 import { DrawingEngine } from '../drawing/engine';
 import { DEFAULT_BRUSH } from '../drawing/brush';
+import { evaluate3D, strokeStability, type GridEvalResult } from '../evaluation/quantitative';
 import { saveSession, savePrompt } from '../store/db';
 import type { BrushConfig, Prompt, Session } from '../store/types';
+import { EvaluationView } from './EvaluationView';
+import { imageDataToCanvas, drawingToInkImageData } from './imageUtils';
 import './Scene3DScreen.css';
+
+/** 3Dモード評価のグリッド分割数 */
+const EVAL_GRID_N = 4;
 
 const VIEW_SIZE = 480;
 const CANVAS_SIZE = 480;
@@ -21,8 +27,8 @@ const DIFFICULTY_LABELS: { value: Difficulty; label: string }[] = [
 /** outline.ts のデフォルト値に合わせる */
 const DEFAULT_OUTLINE = { depthThreshold: 0.06, normalThreshold: 0.6, thickness: 1.5 };
 
-/** 描く前は確認フェーズ（回転可・描画不可）、描き始めると描画フェーズ（ビュー固定） */
-type Phase = 'preview' | 'drawing';
+/** 描く前は確認フェーズ（回転可・描画不可）、描き始めると描画フェーズ（ビュー固定）、保存後は結果フェーズ */
+type Phase = 'preview' | 'drawing' | 'result';
 
 const randomSeed = (): number => Math.floor(Math.random() * 2 ** 31);
 
@@ -52,6 +58,12 @@ export const Scene3DScreen = () => {
   const [canRedo, setCanRedo] = useState(false);
   const [resetCounter, setResetCounter] = useState(0);
   const [toast, setToast] = useState<string | null>(null);
+
+  // --- 評価結果 ---
+  const [evalResult, setEvalResult] = useState<GridEvalResult | null>(null);
+  const [evalStability, setEvalStability] = useState(0);
+  const [evalImage, setEvalImage] = useState<HTMLCanvasElement | null>(null);
+  const [saving, setSaving] = useState(false);
 
   // --- Scene3DView 生成・破棄（マウント時のみ） ---
   useEffect(() => {
@@ -191,43 +203,73 @@ export const Scene3DScreen = () => {
   // --- 保存 ---
   const handleSave = useCallback(async () => {
     const engine = engineRef.current;
-    if (!engine) return;
+    const view = viewRef.current;
+    if (!engine || !view) return;
+    setSaving(true);
 
-    const thumbnailBlob = await engine.exportImage(256);
-    const strokes = engine.getStrokes().map((s) => s.stroke);
+    try {
+      const thumbnailBlob = await engine.exportImage(256);
+      const strokes = engine.getStrokes().map((s) => s.stroke);
 
-    const now = Date.now();
-    const promptId = `p3d-${seed}-${difficulty}`;
+      const now = Date.now();
+      const promptId = `p3d-${seed}-${difficulty}`;
 
-    const prompt: Prompt = {
-      id: promptId,
-      source: 'template',
-      text: 'この3D構図を線画でデッサンする',
-      category: 'perspective',
-      scene3dSeed: seed,
-    };
-    await savePrompt(prompt);
+      const prompt: Prompt = {
+        id: promptId,
+        source: 'template',
+        text: 'この3D構図を線画でデッサンする',
+        category: 'perspective',
+        scene3dSeed: seed,
+      };
+      await savePrompt(prompt);
 
-    const session: Session = {
-      id: crypto.randomUUID(),
-      promptId,
-      strokes,
-      thumbnailBlob,
-      mode: 'primitive3d',
-      startedAt: startedAtRef.current || now,
-      durationMs: now - (startedAtRef.current || now),
-    };
-    await saveSession(session);
+      // 正解エッジマップと描画を比較して定量評価
+      const gt = view.captureGroundTruth();
+      const drawingBlob = await engine.exportImage();
+      // 白地に黒インクへ正規化（白系ブラシでも評価で線が消えないように）
+      const drawingImage = await drawingToInkImageData(drawingBlob);
+      const result = evaluate3D(gt.edgeMap, drawingImage, EVAL_GRID_N);
+      const stability = strokeStability(strokes);
 
-    setToast('保存しました');
-    setTimeout(() => setToast(null), 2500);
+      const session: Session = {
+        id: crypto.randomUUID(),
+        promptId,
+        strokes,
+        thumbnailBlob,
+        mode: 'primitive3d',
+        startedAt: startedAtRef.current || now,
+        durationMs: now - (startedAtRef.current || now),
+        evaluation: {
+          quantitative: {
+            cellScores: result.cellScores,
+            centroidOffsets: result.centroidOffsets,
+            strokeStability: stability,
+          },
+        },
+      };
+      await saveSession(session);
 
-    // 新しいお題をロードし、確認フェーズに戻る
+      setEvalResult(result);
+      setEvalStability(stability);
+      setEvalImage(imageDataToCanvas(drawingImage));
+      setPhase('result');
+    } catch {
+      setToast('保存に失敗しました');
+      setTimeout(() => setToast(null), 2500);
+    } finally {
+      setSaving(false);
+    }
+  }, [seed, difficulty]);
+
+  // --- 結果確認後: 次のお題へ ---
+  const handleNextPrompt = useCallback(() => {
+    setEvalResult(null);
+    setEvalImage(null);
     setCanUndo(false);
     setCanRedo(false);
     setResetCounter((c) => c + 1);
     loadScene(randomSeed(), difficulty);
-  }, [seed, difficulty, loadScene]);
+  }, [loadScene, difficulty]);
 
   return (
     <div className="scene3d-screen">
@@ -448,11 +490,25 @@ export const Scene3DScreen = () => {
 
         <div className="tool-item">
           <span>保存</span>
-          <button className="btn btn-primary" onClick={handleSave} disabled={phase === 'preview'}>
+          <button className="btn btn-primary" onClick={handleSave} disabled={phase !== 'drawing' || saving}>
             保存
           </button>
         </div>
       </div>
+
+      {phase === 'result' && evalResult && (
+        <div className="result-overlay" onClick={handleNextPrompt}>
+          <div className="result-modal" onClick={(e) => e.stopPropagation()}>
+            <h2>評価結果</h2>
+            <EvaluationView result={evalResult} stability={evalStability} image={evalImage} />
+            <div className="button-row">
+              <button className="btn btn-primary" onClick={handleNextPrompt}>
+                次のお題へ
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {toast && <div className="toast">{toast}</div>}
     </div>

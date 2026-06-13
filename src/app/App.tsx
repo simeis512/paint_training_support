@@ -1,11 +1,12 @@
 // 画面シェル: ヘッダー + タブ切替（描く / セッション一覧）
 import { useState } from 'react';
 import { DrawScreen } from './DrawScreen';
+import { GridCopyScreen } from './GridCopyScreen';
 import { Scene3DScreen } from './Scene3DScreen';
 import { SessionsScreen } from './SessionsScreen';
 import './App.css';
 
-type Tab = 'draw' | 'scene3d' | 'sessions';
+type Tab = 'draw' | 'gridCopy' | 'scene3d' | 'sessions';
 
 function App() {
   const [tab, setTab] = useState<Tab>('draw');
@@ -20,6 +21,12 @@ function App() {
             onClick={() => setTab('draw')}
           >
             描く
+          </button>
+          <button
+            className={`app-tab ${tab === 'gridCopy' ? 'active' : ''}`}
+            onClick={() => setTab('gridCopy')}
+          >
+            グリッド模写
           </button>
           <button
             className={`app-tab ${tab === 'scene3d' ? 'active' : ''}`}
@@ -38,6 +45,7 @@ function App() {
 
       <main className="app-main">
         {tab === 'draw' && <DrawScreen />}
+        {tab === 'gridCopy' && <GridCopyScreen />}
         {tab === 'scene3d' && <Scene3DScreen />}
         {tab === 'sessions' && <SessionsScreen />}
       </main>

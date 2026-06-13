@@ -1,0 +1,210 @@
+.grid-copy-screen {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  align-items: center;
+  width: 100%;
+}
+
+/* --- 取込ステップ --- */
+
+.grid-copy-import {
+  width: 100%;
+  max-width: 560px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.grid-copy-import h2 {
+  margin: 0;
+}
+
+.import-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.import-section h3 {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text-dim);
+}
+
+.camera-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.camera-video {
+  width: 100%;
+  max-width: 480px;
+  border-radius: 4px;
+  background: #000;
+}
+
+/* --- 台形補正ステップ --- */
+
+.grid-copy-rectify {
+  width: 100%;
+  max-width: 1024px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.grid-copy-rectify h2 {
+  margin: 0;
+}
+
+.rectify-hint {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.rectify-canvas {
+  max-width: 100%;
+  touch-action: none;
+  background: #2a2c33;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: grab;
+}
+
+/* --- 練習ステップ --- */
+
+.grid-copy-practice {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.practice-main {
+  width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  justify-content: center;
+}
+
+.practice-pane {
+  position: relative;
+  flex: none;
+  background: #2a2c33;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.practice-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.reference-canvas {
+  z-index: 1;
+}
+
+.onion-canvas {
+  z-index: 1;
+}
+
+.draw-canvas-inner {
+  z-index: 2;
+  touch-action: none;
+  cursor: crosshair;
+}
+
+.grid-overlay {
+  z-index: 3;
+  pointer-events: none;
+}
+
+.reference-pane {
+  cursor: pointer;
+}
+
+/* --- セルフォーカスモーダル --- */
+
+.focus-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.focus-modal {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 90vw;
+}
+
+.focus-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.focus-header h3 {
+  margin: 0;
+}
+
+.focus-canvas {
+  width: 360px;
+  height: 360px;
+  max-width: 100%;
+  background: #2a2c33;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  display: block;
+}
+
+/* --- 結果ステップ --- */
+
+.grid-copy-result {
+  width: 100%;
+  max-width: 560px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.grid-copy-result h2 {
+  margin: 0;
+}
+
+@media (max-width: 1200px) {
+  .practice-pane {
+    width: 100% !important;
+    max-width: 560px;
+    height: auto !important;
+    aspect-ratio: 1 / 1;
+  }
+}

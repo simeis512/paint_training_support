@@ -51,6 +51,7 @@ export const SessionsScreen = () => {
         {sessions.map((s) => (
           <div key={s.id} className="session-card" onClick={() => setReplayId(s.id)}>
             <img className="session-thumb" src={URL.createObjectURL(s.thumbnailBlob)} alt="" />
+            {s.hasEvaluation && <span className="session-eval-badge">評価あり</span>}
             <div className="session-info">
               <span className="session-date">{formatDate(s.startedAt)}</span>
               <span className="session-duration">{formatDuration(s.durationMs)}</span>

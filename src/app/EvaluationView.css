@@ -1,0 +1,54 @@
+.evaluation-view {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: center;
+}
+
+.evaluation-canvas-wrap {
+  width: 100%;
+  max-width: 420px;
+  display: flex;
+  justify-content: center;
+  background: #2a2c33;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.evaluation-canvas {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.evaluation-scores {
+  display: flex;
+  gap: 24px;
+  align-items: baseline;
+}
+
+.evaluation-score-main,
+.evaluation-score-sub {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.evaluation-score-label {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.evaluation-score-value {
+  font-size: 36px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.evaluation-score-value-sub {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text);
+}
