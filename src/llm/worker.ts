@@ -44,6 +44,23 @@ let model: LoadedModel | null = null;
 
 // ---- ロード ----
 
+/**
+ * WebGPU アダプタが shader-f16 に対応しているか（Worker コンテキストでも navigator.gpu は利用可）。
+ * q4f16 量子化は f16 必須のため、非対応デバイスでは q4（fp32 活性）へフォールバックする。
+ */
+async function supportsShaderF16(): Promise<boolean> {
+  try {
+    const gpu = (navigator as unknown as {
+      gpu?: { requestAdapter: () => Promise<{ features: { has: (f: string) => boolean } } | null> };
+    }).gpu;
+    if (!gpu) return false;
+    const adapter = await gpu.requestAdapter();
+    return adapter?.features.has('shader-f16') ?? false;
+  } catch {
+    return false;
+  }
+}
+
 async function handleLoad(variant: 'E4B' | 'E2B'): Promise<void> {
   try {
     const modelId = MODEL_IDS[variant];
@@ -76,16 +93,41 @@ async function handleLoad(variant: 'E4B' | 'E2B'): Promise<void> {
 
     post({ type: 'progress', progress: 0, text: 'モデル準備中' });
 
-    // AutoProcessor + Gemma4ForConditionalGeneration（q4f16 / webgpu）。
+    // デバイスの f16 対応で dtype を決定（q4f16 は shader-f16 必須。非対応 GPU では q4 を使う）
+    const hasF16 = await supportsShaderF16();
+    let dtype: 'q4f16' | 'q4' = hasF16 ? 'q4f16' : 'q4';
+    if (!hasF16) {
+      post({ type: 'progress', progress: 0, text: 'このGPUはf16非対応のため q4 形式で読み込みます' });
+    }
+
     processor = (await AutoProcessor.from_pretrained(modelId, {
       progress_callback,
     })) as unknown as LoadedProcessor;
 
-    model = (await Gemma4ForConditionalGeneration.from_pretrained(modelId, {
-      dtype: 'q4f16',
-      device: 'webgpu',
-      progress_callback,
-    })) as unknown as LoadedModel;
+    // 検出をすり抜けて f16 エラーになった場合は q4 で1回だけ再試行する
+    // （q4f16 と q4 は別ファイルのため再ダウンロードが発生する点に注意）
+    try {
+      model = (await Gemma4ForConditionalGeneration.from_pretrained(modelId, {
+        dtype,
+        device: 'webgpu',
+        progress_callback,
+      })) as unknown as LoadedModel;
+    } catch (err) {
+      const msg = toMessage(err);
+      if (dtype === 'q4f16' && /f16/i.test(msg)) {
+        dtype = 'q4';
+        fileTotals.clear();
+        fileLoaded.clear();
+        post({ type: 'progress', progress: 0, text: 'f16でのロードに失敗したため q4 形式で再試行します' });
+        model = (await Gemma4ForConditionalGeneration.from_pretrained(modelId, {
+          dtype,
+          device: 'webgpu',
+          progress_callback,
+        })) as unknown as LoadedModel;
+      } else {
+        throw err;
+      }
+    }
 
     post({ type: 'progress', progress: 1, text: '読み込み完了' });
     post({ type: 'ready' });

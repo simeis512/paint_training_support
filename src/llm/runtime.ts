@@ -83,7 +83,10 @@ function ensureWorker(): Worker {
   worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
   worker.onmessage = (ev: MessageEvent<WorkerResponse>) => handleWorkerMessage(ev.data);
   worker.onerror = (ev: ErrorEvent) => {
-    const message = ev.message || 'Worker エラー';
+    // message が空 = Worker スクリプト自体の起動失敗が多い（開発時はViteキャッシュ破損など）
+    const message =
+      ev.message ||
+      `Worker の起動に失敗しました${ev.filename ? `（${ev.filename}:${ev.lineno ?? '?'}）` : ''}。ページを再読み込みして再試行してください`;
     // ロード中なら失敗扱い、生成中の全リクエストも失敗させる。
     if (state.status === 'loading') setState({ status: 'error', error: message });
     loadResolvers?.reject(new Error(message));
