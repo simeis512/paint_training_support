@@ -3,10 +3,16 @@ import { useEffect, useRef } from 'react';
 import type { GridEvalResult } from '../evaluation/quantitative';
 import './EvaluationView.css';
 
+type LlmFeedback = { praise: string; issue: string; nextAction: string };
+
 type Props = {
   result: GridEvalResult;
   stability: number;
   image: Blob | HTMLCanvasElement | null;
+  /** LLM 講評（未ロード時は undefined/null で枠ごと非表示） */
+  feedback?: LlmFeedback | null;
+  /** 講評を非同期取得中かどうか */
+  feedbackLoading?: boolean;
 };
 
 /** score(0-1) を hsl の hue 0(赤)〜120(緑) にマップした半透明色を返す */
@@ -16,7 +22,7 @@ const scoreToColor = (score: number, alpha: number): string => {
   return `hsla(${hue}, 80%, 50%, ${alpha})`;
 };
 
-export const EvaluationView = ({ result, stability, image }: Props) => {
+export const EvaluationView = ({ result, stability, image, feedback, feedbackLoading }: Props) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   // ヒートマップ描画（背景画像 + セル別スコアの半透明オーバーレイ + スコア表示）
@@ -109,6 +115,33 @@ export const EvaluationView = ({ result, stability, image }: Props) => {
           <span className="evaluation-score-value-sub">{stabilityPercent}%</span>
         </div>
       </div>
+
+      {(feedbackLoading || feedback) && (
+        <div className="llm-feedback-card">
+          {feedbackLoading && !feedback && (
+            <div className="llm-feedback-loading">
+              <span className="llm-feedback-spinner" />
+              AIコーチが講評を作成中…
+            </div>
+          )}
+          {feedback && (
+            <>
+              <div className="llm-feedback-row">
+                <span className="llm-feedback-icon">良い点</span>
+                <span>{feedback.praise}</span>
+              </div>
+              <div className="llm-feedback-row">
+                <span className="llm-feedback-icon">課題</span>
+                <span>{feedback.issue}</span>
+              </div>
+              <div className="llm-feedback-row">
+                <span className="llm-feedback-icon">次にやること</span>
+                <span>{feedback.nextAction}</span>
+              </div>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 };

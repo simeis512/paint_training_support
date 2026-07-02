@@ -58,5 +58,5 @@ Vite + React + TypeScript / Canvas 2D（スタンプ方式ブラシ）/ Pointer 
 | Phase 1 | P0-1 描画エンジン + 永続化基盤 + リプレイ | 完了 |
 | Phase 2 | P0-3 3Dモード | 完了 |
 | Phase 3 | P0-2 グリッド模写 + P0-4 定量評価 | 完了 |
-| Phase 4 | P1-1 LLM 統合 | 未着手 |
+| Phase 4 | P1-1 LLM 統合 | 完了 |
 | Phase 5 | P1-2 継続系 + UI 仕上げ | 未着手 |

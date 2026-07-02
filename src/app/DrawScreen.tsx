@@ -2,8 +2,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { DrawingEngine } from '../drawing/engine';
 import { DEFAULT_BRUSH } from '../drawing/brush';
-import { saveSession } from '../store/db';
-import type { BrushConfig, LayerId, PressureCurve, Session } from '../store/types';
+import { saveSession, savePrompt, getUserStats } from '../store/db';
+import { generateDrawingPrompt } from '../llm/services';
+import type { BrushConfig, LayerId, PressureCurve, Prompt, Session } from '../store/types';
 import { PressureCurveEditor } from './PressureCurveEditor';
 import './DrawScreen.css';
 
@@ -38,6 +39,10 @@ export const DrawScreen = () => {
 
   const [toast, setToast] = useState<string | null>(null);
   const [resetCounter, setResetCounter] = useState(0);
+
+  // お題（初期表示はなし。「お題を出す」で生成）
+  const [prompt, setPrompt] = useState<Prompt | null>(null);
+  const [promptLoading, setPromptLoading] = useState(false);
 
   // エンジン生成・破棄
   useEffect(() => {
@@ -119,6 +124,18 @@ export const DrawScreen = () => {
     setBrushState((prev) => ({ ...prev, opacityCurve: curve }));
   }, []);
 
+  const handleGeneratePrompt = useCallback(async () => {
+    setPromptLoading(true);
+    try {
+      const stats = await getUserStats();
+      const { prompt: generated } = await generateDrawingPrompt(stats);
+      await savePrompt(generated);
+      setPrompt(generated);
+    } finally {
+      setPromptLoading(false);
+    }
+  }, []);
+
   const handleSave = useCallback(async () => {
     const engine = engineRef.current;
     if (!engine) return;
@@ -129,7 +146,7 @@ export const DrawScreen = () => {
     const now = Date.now();
     const session: Session = {
       id: crypto.randomUUID(),
-      promptId: `free-${new Date(startedAtRef.current).toISOString().slice(0, 10)}`,
+      promptId: prompt ? prompt.id : `free-${new Date(startedAtRef.current).toISOString().slice(0, 10)}`,
       strokes,
       thumbnailBlob,
       mode: 'free',
@@ -144,11 +161,38 @@ export const DrawScreen = () => {
     // 新規キャンバス: エンジン再生成
     setCanUndo(false);
     setCanRedo(false);
+    setPrompt(null);
     setResetCounter((c) => c + 1);
-  }, []);
+  }, [prompt]);
 
   return (
     <div className="draw-screen">
+      <div className="prompt-panel">
+        {prompt ? (
+          <div className="prompt-content">
+            <div className="prompt-main">
+              <span className="prompt-motif">{prompt.text}</span>
+              {prompt.source === 'llm' && <span className="prompt-badge">AI出題</span>}
+            </div>
+            <div className="prompt-meta">
+              <span className="prompt-chip">{prompt.category}</span>
+              {prompt.constraints?.map((c) => (
+                <span key={c} className="prompt-chip">{c}</span>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <span className="prompt-placeholder">「お題を出す」を押すとお題が表示されます</span>
+        )}
+        <button
+          className="btn btn-primary prompt-generate-btn"
+          onClick={handleGeneratePrompt}
+          disabled={promptLoading}
+        >
+          {promptLoading ? <span className="btn-spinner" /> : 'お題を出す'}
+        </button>
+      </div>
+
       <div className="canvas-wrap">
         <canvas ref={canvasRef} className="draw-canvas" />
       </div>

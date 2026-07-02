@@ -6,11 +6,28 @@ import type { LightPreset, ShadingSteps } from '../scene3d/shading';
 import { DrawingEngine } from '../drawing/engine';
 import { DEFAULT_BRUSH } from '../drawing/brush';
 import { evaluate3D, strokeStability, type GridEvalResult } from '../evaluation/quantitative';
-import { saveSession, savePrompt } from '../store/db';
-import type { BrushConfig, Prompt, Session } from '../store/types';
+import { saveSession, savePrompt, getUserStats, saveUserStats } from '../store/db';
+import type { BrushConfig, Category, Evaluation, Prompt, Session } from '../store/types';
+import { getLlmState, subscribeLlm } from '../llm/runtime';
+import { generateMitatePrompt, generateFeedback } from '../llm/services';
 import { EvaluationView } from './EvaluationView';
 import { imageDataToCanvas, drawingToInkImageData } from './imageUtils';
 import './Scene3DScreen.css';
+
+/** rAF 内で描画バッファをキャプチャする（preserveDrawingBuffer:false 対策）。フレーム外だと空になる。 */
+const captureCanvasFrame = (canvas: HTMLCanvasElement): Promise<HTMLCanvasElement> =>
+  new Promise((resolve) => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const tmp = document.createElement('canvas');
+        tmp.width = canvas.width;
+        tmp.height = canvas.height;
+        const ctx = tmp.getContext('2d');
+        ctx?.drawImage(canvas, 0, 0);
+        resolve(tmp);
+      });
+    });
+  });
 
 /** 3Dモード評価のグリッド分割数 */
 const EVAL_GRID_N = 4;
@@ -64,6 +81,20 @@ export const Scene3DScreen = () => {
   const [evalStability, setEvalStability] = useState(0);
   const [evalImage, setEvalImage] = useState<HTMLCanvasElement | null>(null);
   const [saving, setSaving] = useState(false);
+
+  // --- LLM 講評 ---
+  const [llmFeedback, setLlmFeedback] = useState<Evaluation['llmFeedback'] | null>(null);
+  const [feedbackLoading, setFeedbackLoading] = useState(false);
+
+  // --- 見立てお題（AI）---
+  const DEFAULT_PROMPT_TEXT = 'この3D構図を線画でデッサンする';
+  const [promptText, setPromptText] = useState(DEFAULT_PROMPT_TEXT);
+  const [promptSource, setPromptSource] = useState<'template' | 'llm'>('template');
+  const [mitateLoading, setMitateLoading] = useState(false);
+  const [llmReady, setLlmReady] = useState(getLlmState().status === 'ready');
+
+  // --- LLM 状態購読（ready かどうかのみ使う） ---
+  useEffect(() => subscribeLlm((s) => setLlmReady(s.status === 'ready')), []);
 
   // --- Scene3DView 生成・破棄（マウント時のみ） ---
   useEffect(() => {
@@ -127,6 +158,8 @@ export const Scene3DScreen = () => {
     setSeed(nextSeed);
     setSeedInput(String(nextSeed));
     setPhase('preview');
+    setPromptText(DEFAULT_PROMPT_TEXT);
+    setPromptSource('template');
   }, [renderMode, depthThreshold, normalThreshold, thickness, lightPreset, shadingSteps]);
 
   // 初回ロード（Scene3DView 生成後に実行）
@@ -187,6 +220,25 @@ export const Scene3DScreen = () => {
     setPhase('drawing');
   }, []);
 
+  // --- AIに見立てお題を頼む ---
+  const handleMitatePrompt = useCallback(async () => {
+    const view = viewRef.current;
+    const canvas = viewCanvasRef.current;
+    const spec = view?.currentSpec;
+    if (!view || !canvas || !spec) return;
+
+    setMitateLoading(true);
+    try {
+      // WebGL は preserveDrawingBuffer:false のため、rAF フレーム内で drawImage する必要がある
+      const tmpCanvas = await captureCanvasFrame(canvas);
+      const { text, source } = await generateMitatePrompt(tmpCanvas, spec);
+      setPromptText(text);
+      setPromptSource(source);
+    } finally {
+      setMitateLoading(false);
+    }
+  }, []);
+
   // --- 描画ツールバー操作 ---
   const handleUndo = useCallback(() => {
     engineRef.current?.undo();
@@ -206,6 +258,7 @@ export const Scene3DScreen = () => {
     const view = viewRef.current;
     if (!engine || !view) return;
     setSaving(true);
+    setLlmFeedback(null);
 
     try {
       const thumbnailBlob = await engine.exportImage(256);
@@ -213,12 +266,13 @@ export const Scene3DScreen = () => {
 
       const now = Date.now();
       const promptId = `p3d-${seed}-${difficulty}`;
+      const category: Category = 'perspective';
 
       const prompt: Prompt = {
         id: promptId,
-        source: 'template',
-        text: 'この3D構図を線画でデッサンする',
-        category: 'perspective',
+        source: promptSource,
+        text: promptText,
+        category,
         scene3dSeed: seed,
       };
       await savePrompt(prompt);
@@ -231,40 +285,66 @@ export const Scene3DScreen = () => {
       const result = evaluate3D(gt.edgeMap, drawingImage, EVAL_GRID_N);
       const stability = strokeStability(strokes);
 
+      const sessionId = crypto.randomUUID();
+      const evaluation: Evaluation = {
+        quantitative: {
+          cellScores: result.cellScores,
+          centroidOffsets: result.centroidOffsets,
+          strokeStability: stability,
+        },
+      };
       const session: Session = {
-        id: crypto.randomUUID(),
+        id: sessionId,
         promptId,
         strokes,
         thumbnailBlob,
         mode: 'primitive3d',
         startedAt: startedAtRef.current || now,
         durationMs: now - (startedAtRef.current || now),
-        evaluation: {
-          quantitative: {
-            cellScores: result.cellScores,
-            centroidOffsets: result.centroidOffsets,
-            strokeStability: stability,
-          },
-        },
+        evaluation,
       };
       await saveSession(session);
+
+      // 弱点出題のためカテゴリ別 EMA スコアを更新
+      const stats = await getUserStats();
+      const prev = stats.categoryScores[category];
+      const nextEma = prev ? prev.ema * 0.7 + result.overall * 0.3 : result.overall;
+      const nextN = (prev?.n ?? 0) + 1;
+      await saveUserStats({
+        ...stats,
+        categoryScores: { ...stats.categoryScores, [category]: { ema: nextEma, n: nextN } },
+      });
 
       setEvalResult(result);
       setEvalStability(stability);
       setEvalImage(imageDataToCanvas(drawingImage));
       setPhase('result');
+
+      // 講評は非同期生成（UI をブロックしない）。LLM 未ロード時は null が返り枠は非表示のまま。
+      if (getLlmState().status === 'ready') {
+        setFeedbackLoading(true);
+        void generateFeedback(drawingBlob, evaluation, 'primitive3d')
+          .then(async (feedback) => {
+            if (!feedback) return;
+            setLlmFeedback(feedback);
+            await saveSession({ ...session, evaluation: { ...evaluation, llmFeedback: feedback } });
+          })
+          .finally(() => setFeedbackLoading(false));
+      }
     } catch {
       setToast('保存に失敗しました');
       setTimeout(() => setToast(null), 2500);
     } finally {
       setSaving(false);
     }
-  }, [seed, difficulty]);
+  }, [seed, difficulty, promptText, promptSource]);
 
   // --- 結果確認後: 次のお題へ ---
   const handleNextPrompt = useCallback(() => {
     setEvalResult(null);
     setEvalImage(null);
+    setLlmFeedback(null);
+    setFeedbackLoading(false);
     setCanUndo(false);
     setCanRedo(false);
     setResetCounter((c) => c + 1);
@@ -292,6 +372,11 @@ export const Scene3DScreen = () => {
         </div>
       </div>
 
+      <div className="scene3d-prompt-text">
+        <span>{promptText}</span>
+        {promptSource === 'llm' && <span className="prompt-badge">AI出題</span>}
+      </div>
+
       <div className="toolbar">
         <div className="tool-item">
           <span>難易度</span>
@@ -313,6 +398,14 @@ export const Scene3DScreen = () => {
           <div className="button-row">
             <button className="btn btn-primary" onClick={handleNewPrompt}>
               新しいお題
+            </button>
+            <button
+              className="btn"
+              onClick={handleMitatePrompt}
+              disabled={!llmReady || mitateLoading}
+              title={llmReady ? undefined : 'LLMがロードされると使えます（ヘッダーの状態表示からロードできます）'}
+            >
+              {mitateLoading ? <span className="btn-spinner" /> : 'AIに見立てお題を頼む'}
             </button>
           </div>
         </div>
@@ -500,7 +593,13 @@ export const Scene3DScreen = () => {
         <div className="result-overlay" onClick={handleNextPrompt}>
           <div className="result-modal" onClick={(e) => e.stopPropagation()}>
             <h2>評価結果</h2>
-            <EvaluationView result={evalResult} stability={evalStability} image={evalImage} />
+            <EvaluationView
+              result={evalResult}
+              stability={evalStability}
+              image={evalImage}
+              feedback={llmFeedback}
+              feedbackLoading={feedbackLoading}
+            />
             <div className="button-row">
               <button className="btn btn-primary" onClick={handleNextPrompt}>
                 次のお題へ

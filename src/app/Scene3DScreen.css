@@ -69,6 +69,20 @@
   cursor: not-allowed;
 }
 
+.scene3d-prompt-text {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+
 .seed-input {
   width: 100%;
   padding: 4px 8px;

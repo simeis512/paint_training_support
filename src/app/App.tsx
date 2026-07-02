@@ -4,6 +4,7 @@ import { DrawScreen } from './DrawScreen';
 import { GridCopyScreen } from './GridCopyScreen';
 import { Scene3DScreen } from './Scene3DScreen';
 import { SessionsScreen } from './SessionsScreen';
+import { LlmPanel } from './LlmPanel';
 import './App.css';
 
 type Tab = 'draw' | 'gridCopy' | 'scene3d' | 'sessions';
@@ -41,6 +42,7 @@ function App() {
             セッション一覧
           </button>
         </nav>
+        <LlmPanel />
       </header>
 
       <main className="app-main">

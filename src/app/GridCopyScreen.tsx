@@ -6,8 +6,10 @@ import { drawGrid, drawGridLabels, cellRect } from '../reference/grid';
 import { evaluateGridCopy, strokeStability, type GridEvalResult } from '../evaluation/quantitative';
 import { DrawingEngine } from '../drawing/engine';
 import { DEFAULT_BRUSH } from '../drawing/brush';
-import { saveReferenceImage, savePrompt, saveSession } from '../store/db';
-import type { BrushConfig, Prompt, Session } from '../store/types';
+import { saveReferenceImage, savePrompt, saveSession, getUserStats, saveUserStats } from '../store/db';
+import type { BrushConfig, Evaluation, Prompt, Session } from '../store/types';
+import { getLlmState } from '../llm/runtime';
+import { generateFeedback } from '../llm/services';
 import { EvaluationView } from './EvaluationView';
 import { imageDataToCanvas, drawingToInkImageData } from './imageUtils';
 import './GridCopyScreen.css';
@@ -91,6 +93,10 @@ export const GridCopyScreen = () => {
   const [evalImage, setEvalImage] = useState<HTMLCanvasElement | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+
+  // --- LLM 講評 ---
+  const [llmFeedback, setLlmFeedback] = useState<Evaluation['llmFeedback'] | null>(null);
+  const [feedbackLoading, setFeedbackLoading] = useState(false);
 
   // ============================================================
   // 取込ステップ
@@ -488,6 +494,7 @@ export const GridCopyScreen = () => {
     const engine = engineRef.current;
     if (!engine || !referenceImage) return;
     setSaving(true);
+    setLlmFeedback(null);
 
     try {
       // 1. 参照画像を保存
@@ -518,29 +525,53 @@ export const GridCopyScreen = () => {
 
       // 4. Session 保存
       const now = Date.now();
+      const sessionId = crypto.randomUUID();
+      const evaluation: Evaluation = {
+        quantitative: {
+          cellScores: result.cellScores,
+          centroidOffsets: result.centroidOffsets,
+          strokeStability: stability,
+        },
+      };
       const session: Session = {
-        id: crypto.randomUUID(),
+        id: sessionId,
         promptId: prompt.id,
         strokes,
         thumbnailBlob: await engine.exportImage(256),
         mode: 'gridCopy',
         startedAt: startedAtRef.current || now,
         durationMs: now - (startedAtRef.current || now),
-        evaluation: {
-          quantitative: {
-            cellScores: result.cellScores,
-            centroidOffsets: result.centroidOffsets,
-            strokeStability: stability,
-          },
-        },
+        evaluation,
       };
       await saveSession(session);
 
-      // 5. 評価結果パネルを表示
+      // 5. 弱点出題のためカテゴリ別 EMA スコアを更新
+      const stats = await getUserStats();
+      const prev = stats.categoryScores[prompt.category];
+      const nextEma = prev ? prev.ema * 0.7 + result.overall * 0.3 : result.overall;
+      const nextN = (prev?.n ?? 0) + 1;
+      await saveUserStats({
+        ...stats,
+        categoryScores: { ...stats.categoryScores, [prompt.category]: { ema: nextEma, n: nextN } },
+      });
+
+      // 6. 評価結果パネルを表示
       setEvalResult(result);
       setEvalStability(stability);
       setEvalImage(imageDataToCanvas(drawingImage));
       setStep('result');
+
+      // 7. 講評は非同期生成（UI をブロックしない）。LLM 未ロード時は null が返り枠は非表示のまま。
+      if (getLlmState().status === 'ready') {
+        setFeedbackLoading(true);
+        void generateFeedback(drawingBlob, evaluation, 'gridCopy')
+          .then(async (feedback) => {
+            if (!feedback) return;
+            setLlmFeedback(feedback);
+            await saveSession({ ...session, evaluation: { ...evaluation, llmFeedback: feedback } });
+          })
+          .finally(() => setFeedbackLoading(false));
+      }
     } catch {
       setToast('保存に失敗しました');
       setTimeout(() => setToast(null), 2500);
@@ -552,6 +583,8 @@ export const GridCopyScreen = () => {
   const handleNextPractice = useCallback(() => {
     setEvalResult(null);
     setEvalImage(null);
+    setLlmFeedback(null);
+    setFeedbackLoading(false);
     setReferenceImage(null);
     setRawImage(null);
     setQuad(null);
@@ -774,7 +807,13 @@ export const GridCopyScreen = () => {
       {step === 'result' && evalResult && (
         <div className="grid-copy-result">
           <h2>評価結果</h2>
-          <EvaluationView result={evalResult} stability={evalStability} image={evalImage} />
+          <EvaluationView
+            result={evalResult}
+            stability={evalStability}
+            image={evalImage}
+            feedback={llmFeedback}
+            feedbackLoading={feedbackLoading}
+          />
           <div className="button-row">
             <button className="btn btn-primary" onClick={handleNextPractice}>
               次の練習へ
