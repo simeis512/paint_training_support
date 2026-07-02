@@ -52,10 +52,16 @@
   color: var(--text);
 }
 
-.session-delete {
+.session-actions {
   position: absolute;
   top: 6px;
   right: 6px;
+  display: flex;
+  gap: 4px;
+}
+
+.session-rematch,
+.session-delete {
   padding: 2px 8px;
   font-size: 12px;
   background: rgba(35, 37, 43, 0.85);
@@ -71,4 +77,42 @@
   border-radius: 4px;
   background: rgba(124, 156, 255, 0.9);
   color: #16181d;
+}
+
+/* --- 再戦バナー --- */
+
+.rematch-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--bg-panel);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+}
+
+.rematch-banner-thumb {
+  width: 56px;
+  height: 56px;
+  object-fit: contain;
+  background: #2a2c33;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.rematch-banner-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+}
+
+.rematch-banner-title {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.rematch-banner-sub {
+  font-size: 12px;
+  color: var(--text-dim);
 }

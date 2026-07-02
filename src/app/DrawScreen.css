@@ -215,3 +215,86 @@
 .curve-handle:active {
   cursor: grabbing;
 }
+
+/* --- 再戦パネル・比較表示 --- */
+
+.rematch-panel {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  background: var(--bg-panel);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+}
+
+.rematch-panel-thumb {
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
+  background: #2a2c33;
+  border-radius: 4px;
+}
+
+.rematch-panel-label {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.rematch-compare {
+  display: flex;
+  gap: 16px;
+  justify-content: center;
+}
+
+.rematch-compare-pane {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.rematch-compare-label {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.rematch-compare-img {
+  width: 180px;
+  height: 180px;
+  object-fit: contain;
+  background: #2a2c33;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+/* --- 比較モーダル（result-overlay/result-modal は Scene3DScreen.css と同仕様） --- */
+
+.result-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.result-modal {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  max-width: 90vw;
+  max-height: 90vh;
+  overflow: auto;
+}
+
+.result-modal h2 {
+  margin: 0;
+}

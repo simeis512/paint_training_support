@@ -6,12 +6,25 @@ import { drawGrid, drawGridLabels, cellRect } from '../reference/grid';
 import { evaluateGridCopy, strokeStability, type GridEvalResult } from '../evaluation/quantitative';
 import { DrawingEngine } from '../drawing/engine';
 import { DEFAULT_BRUSH } from '../drawing/brush';
-import { saveReferenceImage, savePrompt, saveSession, getUserStats, saveUserStats } from '../store/db';
+import {
+  saveReferenceImage,
+  savePrompt,
+  saveSession,
+  getUserStats,
+  saveUserStats,
+  getPrompt,
+  getReferenceImage,
+  getSession,
+} from '../store/db';
 import type { BrushConfig, Evaluation, Prompt, Session } from '../store/types';
 import { getLlmState } from '../llm/runtime';
 import { generateFeedback } from '../llm/services';
+import { checkAndAdvanceStreak } from '../progression/streak';
+import { xpForSession } from '../progression/xp';
 import { EvaluationView } from './EvaluationView';
 import { imageDataToCanvas, drawingToInkImageData } from './imageUtils';
+import { SESSION_SAVED_EVENT } from './StreakBadge';
+import type { RematchContext } from './App';
 import './GridCopyScreen.css';
 
 /** 練習ステップの参照・キャンバス表示の最大サイズ(px) */
@@ -50,7 +63,13 @@ const flipImageDataHorizontal = (img: ImageData): ImageData => {
   return out;
 };
 
-export const GridCopyScreen = () => {
+type Props = {
+  /** 再戦中のコンテキスト（mode==='gridCopy' のときのみ渡される） */
+  rematch: RematchContext | null;
+  onClearRematch: () => void;
+};
+
+export const GridCopyScreen = ({ rematch, onClearRematch }: Props) => {
   const [step, setStep] = useState<Step>('import');
 
   // --- 取込・補正 ---
@@ -97,6 +116,40 @@ export const GridCopyScreen = () => {
   // --- LLM 講評 ---
   const [llmFeedback, setLlmFeedback] = useState<Evaluation['llmFeedback'] | null>(null);
   const [feedbackLoading, setFeedbackLoading] = useState(false);
+
+  // --- 再戦 ---
+  const [rematchInfo, setRematchInfo] = useState<{ thumbUrl: string; ageDays: number | null } | null>(null);
+
+  // 再戦コンテキスト反映: 当時の参照画像を復元して練習ステップから開始する
+  useEffect(() => {
+    if (!rematch) return;
+    let cancelled = false;
+    const url = URL.createObjectURL(rematch.thumbnailBlob);
+
+    void (async () => {
+      const [prompt, prevSession] = await Promise.all([
+        getPrompt(rematch.promptId),
+        getSession(rematch.sessionId),
+      ]);
+      if (cancelled) return;
+      const ageDays = prevSession ? Math.round((Date.now() - prevSession.startedAt) / 86400000) : null;
+      setRematchInfo({ thumbUrl: url, ageDays });
+      if (prompt?.referenceImageId) {
+        const blob = await getReferenceImage(prompt.referenceImageId);
+        if (cancelled || !blob) return;
+        const img = await fileToImageData(blob);
+        if (cancelled) return;
+        setReferenceImage(img);
+        setStep('practice');
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      setRematchInfo(null);
+      URL.revokeObjectURL(url);
+    };
+  }, [rematch]);
 
   // ============================================================
   // 取込ステップ
@@ -488,7 +541,8 @@ export const GridCopyScreen = () => {
     setFocusCell(null);
     setEvalResult(null);
     setStep('import');
-  }, []);
+    if (rematch) onClearRematch();
+  }, [rematch, onClearRematch]);
 
   const handleSave = useCallback(async () => {
     const engine = engineRef.current;
@@ -545,15 +599,21 @@ export const GridCopyScreen = () => {
       };
       await saveSession(session);
 
-      // 5. 弱点出題のためカテゴリ別 EMA スコアを更新
+      // 5. 弱点出題のためカテゴリ別 EMA スコアを更新 + XP加算
       const stats = await getUserStats();
       const prev = stats.categoryScores[prompt.category];
       const nextEma = prev ? prev.ema * 0.7 + result.overall * 0.3 : result.overall;
       const nextN = (prev?.n ?? 0) + 1;
+      const xpGain = xpForSession(result.overall, prompt.source === 'daily');
       await saveUserStats({
         ...stats,
         categoryScores: { ...stats.categoryScores, [prompt.category]: { ema: nextEma, n: nextN } },
+        xp: stats.xp + xpGain,
       });
+
+      // ストリーク更新判定（結果は捨ててよい。イベントでヘッダーが再取得する）
+      void checkAndAdvanceStreak();
+      window.dispatchEvent(new CustomEvent(SESSION_SAVED_EVENT));
 
       // 6. 評価結果パネルを表示
       setEvalResult(result);
@@ -593,7 +653,8 @@ export const GridCopyScreen = () => {
     setCanRedo(false);
     setResetCounter((c) => c + 1);
     setStep('import');
-  }, []);
+    if (rematch) onClearRematch();
+  }, [rematch, onClearRematch]);
 
   // ============================================================
   // レンダリング
@@ -661,6 +722,14 @@ export const GridCopyScreen = () => {
 
       {step === 'practice' && referenceImage && (
         <div className="grid-copy-practice">
+          {rematchInfo && (
+            <div className="rematch-panel">
+              <img src={rematchInfo.thumbUrl} alt="前回の絵" className="rematch-panel-thumb" />
+              <span className="rematch-panel-label">
+                前回の絵{rematchInfo.ageDays !== null ? `（${rematchInfo.ageDays}日前）` : ''}
+              </span>
+            </div>
+          )}
           <div className="practice-main">
             <div
               className="practice-pane reference-pane"
@@ -807,6 +876,20 @@ export const GridCopyScreen = () => {
       {step === 'result' && evalResult && (
         <div className="grid-copy-result">
           <h2>評価結果</h2>
+          {rematchInfo && evalImage && (
+            <div className="rematch-compare">
+              <div className="rematch-compare-pane">
+                <span className="rematch-compare-label">
+                  前回{rematchInfo.ageDays !== null ? `（${rematchInfo.ageDays}日前）` : ''}
+                </span>
+                <img src={rematchInfo.thumbUrl} alt="前回の絵" className="rematch-compare-img" />
+              </div>
+              <div className="rematch-compare-pane">
+                <span className="rematch-compare-label">今回</span>
+                <img src={evalImage.toDataURL()} alt="今回の絵" className="rematch-compare-img" />
+              </div>
+            </div>
+          )}
           <EvaluationView
             result={evalResult}
             stability={evalStability}

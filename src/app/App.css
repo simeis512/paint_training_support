@@ -55,6 +55,13 @@ body {
 .app-tabs {
   display: flex;
   gap: 8px;
+  flex-wrap: wrap;
+}
+
+.app-header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .app-tab {

@@ -2,10 +2,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { DrawingEngine } from '../drawing/engine';
 import { DEFAULT_BRUSH } from '../drawing/brush';
-import { saveSession, savePrompt, getUserStats } from '../store/db';
+import { saveSession, savePrompt, getUserStats, saveUserStats, getSession } from '../store/db';
 import { generateDrawingPrompt } from '../llm/services';
+import { checkAndAdvanceStreak } from '../progression/streak';
+import { xpForSession } from '../progression/xp';
 import type { BrushConfig, LayerId, PressureCurve, Prompt, Session } from '../store/types';
 import { PressureCurveEditor } from './PressureCurveEditor';
+import { SESSION_SAVED_EVENT } from './StreakBadge';
+import type { RematchContext } from './App';
 import './DrawScreen.css';
 
 const CANVAS_WIDTH = 800;
@@ -15,7 +19,13 @@ const CANVAS_HEIGHT = 600;
 const DEFAULT_MIN_CUTOFF = 1.0;
 const DEFAULT_BETA = 0.007;
 
-export const DrawScreen = () => {
+type Props = {
+  /** 再戦中のコンテキスト（mode==='free' のときのみ渡される） */
+  rematch: RematchContext | null;
+  onClearRematch: () => void;
+};
+
+export const DrawScreen = ({ rematch, onClearRematch }: Props) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<DrawingEngine | null>(null);
   // 描画開始時刻はエンジン生成エフェクト内で設定する（レンダー中にDate.now()を呼ばない）
@@ -43,6 +53,26 @@ export const DrawScreen = () => {
   // お題（初期表示はなし。「お題を出す」で生成）
   const [prompt, setPrompt] = useState<Prompt | null>(null);
   const [promptLoading, setPromptLoading] = useState(false);
+
+  // --- 再戦 ---
+  const [rematchInfo, setRematchInfo] = useState<{ thumbUrl: string; ageDays: number | null } | null>(null);
+  const [compareModal, setCompareModal] = useState<{ newThumbUrl: string } | null>(null);
+
+  useEffect(() => {
+    if (!rematch) return;
+    let cancelled = false;
+    const url = URL.createObjectURL(rematch.thumbnailBlob);
+    void getSession(rematch.sessionId).then((s) => {
+      if (cancelled) return;
+      const ageDays = s ? Math.round((Date.now() - s.startedAt) / 86400000) : null;
+      setRematchInfo({ thumbUrl: url, ageDays });
+    });
+    return () => {
+      cancelled = true;
+      setRematchInfo(null);
+      URL.revokeObjectURL(url);
+    };
+  }, [rematch]);
 
   // エンジン生成・破棄
   useEffect(() => {
@@ -131,10 +161,11 @@ export const DrawScreen = () => {
       const { prompt: generated } = await generateDrawingPrompt(stats);
       await savePrompt(generated);
       setPrompt(generated);
+      if (rematch) onClearRematch();
     } finally {
       setPromptLoading(false);
     }
-  }, []);
+  }, [rematch, onClearRematch]);
 
   const handleSave = useCallback(async () => {
     const engine = engineRef.current;
@@ -155,18 +186,48 @@ export const DrawScreen = () => {
     };
 
     await saveSession(session);
+
+    // XP加算（自由描画には定量評価がないため overall は null）
+    const stats = await getUserStats();
+    const xpGain = xpForSession(null, prompt?.source === 'daily');
+    await saveUserStats({ ...stats, xp: stats.xp + xpGain });
+
+    // ストリーク更新判定（結果は捨ててよい。イベントでヘッダーが再取得する）
+    void checkAndAdvanceStreak();
+    window.dispatchEvent(new CustomEvent(SESSION_SAVED_EVENT));
+
     setToast('保存しました');
     setTimeout(() => setToast(null), 2500);
+
+    // 再戦中なら新旧比較モーダルを表示
+    if (rematch) {
+      setCompareModal({ newThumbUrl: URL.createObjectURL(thumbnailBlob) });
+    }
 
     // 新規キャンバス: エンジン再生成
     setCanUndo(false);
     setCanRedo(false);
     setPrompt(null);
     setResetCounter((c) => c + 1);
-  }, [prompt]);
+  }, [prompt, rematch]);
+
+  const handleCloseCompare = useCallback(() => {
+    if (compareModal) URL.revokeObjectURL(compareModal.newThumbUrl);
+    setCompareModal(null);
+    onClearRematch();
+  }, [compareModal, onClearRematch]);
 
   return (
     <div className="draw-screen">
+      {rematchInfo && (
+        <div className="rematch-panel">
+          <img src={rematchInfo.thumbUrl} alt="前回の絵" className="rematch-panel-thumb" />
+          <span className="rematch-panel-label">
+            前回の絵{rematchInfo.ageDays !== null ? `（${rematchInfo.ageDays}日前）` : ''}
+          </span>
+        </div>
+      )}
+
       <div className="prompt-panel">
         {prompt ? (
           <div className="prompt-content">
@@ -360,6 +421,31 @@ export const DrawScreen = () => {
           </div>
         </div>
       </details>
+
+      {compareModal && rematchInfo && (
+        <div className="result-overlay" onClick={handleCloseCompare}>
+          <div className="result-modal" onClick={(e) => e.stopPropagation()}>
+            <h2>前回との比較</h2>
+            <div className="rematch-compare">
+              <div className="rematch-compare-pane">
+                <span className="rematch-compare-label">
+                  前回{rematchInfo.ageDays !== null ? `（${rematchInfo.ageDays}日前）` : ''}
+                </span>
+                <img src={rematchInfo.thumbUrl} alt="前回の絵" className="rematch-compare-img" />
+              </div>
+              <div className="rematch-compare-pane">
+                <span className="rematch-compare-label">今回</span>
+                <img src={compareModal.newThumbUrl} alt="今回の絵" className="rematch-compare-img" />
+              </div>
+            </div>
+            <div className="button-row">
+              <button className="btn btn-primary" onClick={handleCloseCompare}>
+                閉じる
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {toast && <div className="toast">{toast}</div>}
     </div>

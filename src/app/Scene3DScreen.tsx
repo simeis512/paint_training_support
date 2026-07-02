@@ -6,12 +6,24 @@ import type { LightPreset, ShadingSteps } from '../scene3d/shading';
 import { DrawingEngine } from '../drawing/engine';
 import { DEFAULT_BRUSH } from '../drawing/brush';
 import { evaluate3D, strokeStability, type GridEvalResult } from '../evaluation/quantitative';
-import { saveSession, savePrompt, getUserStats, saveUserStats } from '../store/db';
+import {
+  saveSession,
+  savePrompt,
+  getUserStats,
+  saveUserStats,
+  getPrompt,
+  getSession,
+} from '../store/db';
 import type { BrushConfig, Category, Evaluation, Prompt, Session } from '../store/types';
 import { getLlmState, subscribeLlm } from '../llm/runtime';
 import { generateMitatePrompt, generateFeedback } from '../llm/services';
+import { dailyPrompt, dailyDifficulty, todayKey } from '../progression/daily';
+import { checkAndAdvanceStreak } from '../progression/streak';
+import { xpForSession } from '../progression/xp';
 import { EvaluationView } from './EvaluationView';
 import { imageDataToCanvas, drawingToInkImageData } from './imageUtils';
+import { SESSION_SAVED_EVENT } from './StreakBadge';
+import type { RematchContext } from './App';
 import './Scene3DScreen.css';
 
 /** rAF 内で描画バッファをキャプチャする（preserveDrawingBuffer:false 対策）。フレーム外だと空になる。 */
@@ -49,7 +61,13 @@ type Phase = 'preview' | 'drawing' | 'result';
 
 const randomSeed = (): number => Math.floor(Math.random() * 2 ** 31);
 
-export const Scene3DScreen = () => {
+type Props = {
+  /** 再戦中のコンテキスト（mode==='primitive3d' のときのみ渡される） */
+  rematch: RematchContext | null;
+  onClearRematch: () => void;
+};
+
+export const Scene3DScreen = ({ rematch, onClearRematch }: Props) => {
   const viewCanvasRef = useRef<HTMLCanvasElement>(null);
   const drawCanvasRef = useRef<HTMLCanvasElement>(null);
   const viewRef = useRef<Scene3DView | null>(null);
@@ -89,9 +107,16 @@ export const Scene3DScreen = () => {
   // --- 見立てお題（AI）---
   const DEFAULT_PROMPT_TEXT = 'この3D構図を線画でデッサンする';
   const [promptText, setPromptText] = useState(DEFAULT_PROMPT_TEXT);
-  const [promptSource, setPromptSource] = useState<'template' | 'llm'>('template');
+  const [promptSource, setPromptSource] = useState<'template' | 'llm' | 'daily'>('template');
   const [mitateLoading, setMitateLoading] = useState(false);
   const [llmReady, setLlmReady] = useState(getLlmState().status === 'ready');
+
+  // --- デイリーお題 ---
+  const [isDaily, setIsDaily] = useState(false);
+  const [dailyDateKey, setDailyDateKey] = useState<string | null>(null);
+
+  // --- 再戦 ---
+  const [rematchInfo, setRematchInfo] = useState<{ thumbUrl: string; ageDays: number | null } | null>(null);
 
   // --- LLM 状態購読（ready かどうかのみ使う） ---
   useEffect(() => subscribeLlm((s) => setLlmReady(s.status === 'ready')), []);
@@ -192,24 +217,76 @@ export const Scene3DScreen = () => {
     viewRef.current?.setShadingSteps(shadingSteps);
   }, [shadingSteps]);
 
+  // --- 再戦コンテキストの反映: 前回サムネイルURL生成 + 対象お題ロード ---
+  useEffect(() => {
+    if (!rematch) return;
+    let cancelled = false;
+    const url = URL.createObjectURL(rematch.thumbnailBlob);
+
+    void (async () => {
+      const [prompt, prevSession] = await Promise.all([
+        getPrompt(rematch.promptId),
+        getSession(rematch.sessionId),
+      ]);
+      if (cancelled) return;
+      const ageDays = prevSession ? Math.round((Date.now() - prevSession.startedAt) / 86400000) : null;
+      setRematchInfo({ thumbUrl: url, ageDays });
+      if (prompt?.scene3dSeed !== undefined) {
+        // 難易度はシードから復元不能なため 2 とする（仕様どおり）
+        setDifficulty(2);
+        loadScene(prompt.scene3dSeed, 2);
+        setPromptText(prompt.text);
+        setPromptSource(prompt.source === 'daily' ? 'daily' : 'template');
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      setRematchInfo(null);
+      URL.revokeObjectURL(url);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rematch]);
+
   // --- お題操作 ---
   const handleNewPrompt = useCallback(() => {
+    setIsDaily(false);
+    setDailyDateKey(null);
+    if (rematch) onClearRematch();
     loadScene(randomSeed(), difficulty);
-  }, [loadScene, difficulty]);
+  }, [loadScene, difficulty, rematch, onClearRematch]);
+
+  const handleDailyPrompt = useCallback(() => {
+    const dateKey = todayKey();
+    const p = dailyPrompt(dateKey);
+    if (rematch) onClearRematch();
+    if (p.scene3dSeed === undefined) return;
+    const diff = dailyDifficulty(dateKey);
+    setDifficulty(diff);
+    loadScene(p.scene3dSeed, diff);
+    setIsDaily(true);
+    setDailyDateKey(dateKey);
+    setPromptText(p.text);
+    setPromptSource('daily');
+  }, [loadScene, rematch, onClearRematch]);
 
   const handleSeedInputCommit = useCallback(() => {
+    if (isDaily) return; // デイリー中はシード変更不可
     const parsed = Number(seedInput);
     if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed < 0) {
       setSeedInput(String(seed));
       return;
     }
+    if (rematch) onClearRematch();
     loadScene(parsed, difficulty);
-  }, [seedInput, seed, difficulty, loadScene]);
+  }, [seedInput, seed, difficulty, loadScene, isDaily, rematch, onClearRematch]);
 
   const handleDifficultyChange = useCallback((next: Difficulty) => {
+    if (isDaily) return; // デイリー中は難易度変更不可
     setDifficulty(next);
+    if (rematch) onClearRematch();
     loadScene(seed, next);
-  }, [seed, loadScene]);
+  }, [seed, loadScene, isDaily, rematch, onClearRematch]);
 
   // --- フェーズ遷移 ---
   const handleStartDrawing = useCallback(() => {
@@ -234,6 +311,8 @@ export const Scene3DScreen = () => {
       const { text, source } = await generateMitatePrompt(tmpCanvas, spec);
       setPromptText(text);
       setPromptSource(source);
+      setIsDaily(false);
+      setDailyDateKey(null);
     } finally {
       setMitateLoading(false);
     }
@@ -265,16 +344,23 @@ export const Scene3DScreen = () => {
       const strokes = engine.getStrokes().map((s) => s.stroke);
 
       const now = Date.now();
-      const promptId = `p3d-${seed}-${difficulty}`;
       const category: Category = 'perspective';
 
-      const prompt: Prompt = {
-        id: promptId,
-        source: promptSource,
-        text: promptText,
-        category,
-        scene3dSeed: seed,
-      };
+      let promptId: string;
+      let prompt: Prompt;
+      if (isDaily && dailyDateKey) {
+        prompt = dailyPrompt(dailyDateKey);
+        promptId = prompt.id;
+      } else {
+        promptId = `p3d-${seed}-${difficulty}`;
+        prompt = {
+          id: promptId,
+          source: promptSource === 'daily' ? 'template' : promptSource,
+          text: promptText,
+          category,
+          scene3dSeed: seed,
+        };
+      }
       await savePrompt(prompt);
 
       // 正解エッジマップと描画を比較して定量評価
@@ -305,15 +391,21 @@ export const Scene3DScreen = () => {
       };
       await saveSession(session);
 
-      // 弱点出題のためカテゴリ別 EMA スコアを更新
+      // 弱点出題のためカテゴリ別 EMA スコアを更新 + XP加算
       const stats = await getUserStats();
       const prev = stats.categoryScores[category];
       const nextEma = prev ? prev.ema * 0.7 + result.overall * 0.3 : result.overall;
       const nextN = (prev?.n ?? 0) + 1;
+      const xpGain = xpForSession(result.overall, isDaily);
       await saveUserStats({
         ...stats,
         categoryScores: { ...stats.categoryScores, [category]: { ema: nextEma, n: nextN } },
+        xp: stats.xp + xpGain,
       });
+
+      // ストリーク更新判定（結果は捨ててよい。イベントでヘッダーが再取得する）
+      void checkAndAdvanceStreak();
+      window.dispatchEvent(new CustomEvent(SESSION_SAVED_EVENT));
 
       setEvalResult(result);
       setEvalStability(stability);
@@ -337,7 +429,7 @@ export const Scene3DScreen = () => {
     } finally {
       setSaving(false);
     }
-  }, [seed, difficulty, promptText, promptSource]);
+  }, [seed, difficulty, promptText, promptSource, isDaily, dailyDateKey]);
 
   // --- 結果確認後: 次のお題へ ---
   const handleNextPrompt = useCallback(() => {
@@ -348,11 +440,23 @@ export const Scene3DScreen = () => {
     setCanUndo(false);
     setCanRedo(false);
     setResetCounter((c) => c + 1);
+    setIsDaily(false);
+    setDailyDateKey(null);
+    if (rematch) onClearRematch();
     loadScene(randomSeed(), difficulty);
-  }, [loadScene, difficulty]);
+  }, [loadScene, difficulty, rematch, onClearRematch]);
 
   return (
     <div className="scene3d-screen">
+      {rematchInfo && (
+        <div className="rematch-panel">
+          <img src={rematchInfo.thumbUrl} alt="前回の絵" className="rematch-panel-thumb" />
+          <span className="rematch-panel-label">
+            前回の絵{rematchInfo.ageDays !== null ? `（${rematchInfo.ageDays}日前）` : ''}
+          </span>
+        </div>
+      )}
+
       <div className="scene3d-main">
         <div className="scene3d-view-wrap">
           <canvas ref={viewCanvasRef} className="scene3d-view-canvas" />
@@ -375,6 +479,7 @@ export const Scene3DScreen = () => {
       <div className="scene3d-prompt-text">
         <span>{promptText}</span>
         {promptSource === 'llm' && <span className="prompt-badge">AI出題</span>}
+        {isDaily && <span className="prompt-badge prompt-badge-daily">デイリー</span>}
       </div>
 
       <div className="toolbar">
@@ -386,6 +491,7 @@ export const Scene3DScreen = () => {
                 key={value}
                 className={`btn ${difficulty === value ? 'btn-primary' : ''}`}
                 onClick={() => handleDifficultyChange(value)}
+                disabled={isDaily}
               >
                 {label}
               </button>
@@ -398,6 +504,9 @@ export const Scene3DScreen = () => {
           <div className="button-row">
             <button className="btn btn-primary" onClick={handleNewPrompt}>
               新しいお題
+            </button>
+            <button className={`btn ${isDaily ? 'btn-primary' : ''}`} onClick={handleDailyPrompt}>
+              今日のデイリーお題
             </button>
             <button
               className="btn"
@@ -418,6 +527,7 @@ export const Scene3DScreen = () => {
             value={seedInput}
             onChange={(e) => setSeedInput(e.target.value)}
             onBlur={handleSeedInputCommit}
+            disabled={isDaily}
             onKeyDown={(e) => {
               if (e.key === 'Enter') handleSeedInputCommit();
             }}
@@ -593,6 +703,20 @@ export const Scene3DScreen = () => {
         <div className="result-overlay" onClick={handleNextPrompt}>
           <div className="result-modal" onClick={(e) => e.stopPropagation()}>
             <h2>評価結果</h2>
+            {rematchInfo && evalImage && (
+              <div className="rematch-compare">
+                <div className="rematch-compare-pane">
+                  <span className="rematch-compare-label">
+                    前回{rematchInfo.ageDays !== null ? `（${rematchInfo.ageDays}日前）` : ''}
+                  </span>
+                  <img src={rematchInfo.thumbUrl} alt="前回の絵" className="rematch-compare-img" />
+                </div>
+                <div className="rematch-compare-pane">
+                  <span className="rematch-compare-label">今回</span>
+                  <img src={evalImage.toDataURL()} alt="今回の絵" className="rematch-compare-img" />
+                </div>
+              </div>
+            )}
             <EvaluationView
               result={evalResult}
               stability={evalStability}
